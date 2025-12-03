@@ -25,7 +25,7 @@
 
 ### 1. Клонирование репозитория
 ```bash
-git clone https://github.com/<yourname>/analyze-pe.git
+git clone https://github.com/D179090/analyze-pe.git
 cd analyze-pe
 ```
 
