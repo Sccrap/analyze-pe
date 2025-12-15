@@ -1,3 +1,6 @@
 analyzer
 main.exe
 .gocache/
+strings.txt
+*.log
+*.tmp
