@@ -21,6 +21,7 @@ func help() {
 	fmt.Println("  -s, --sections   Show sections")
 	fmt.Println("  -b, --basic      Show basic information (SHA256, SSDEEP, size, machine)")
 	fmt.Println("  -x, --strings    Export printable ASCII/UTF-16LE strings (optional output file)")
+	fmt.Println("  -d, --debug      Show debug directory information")
 }
 
 func sectionName(sec peparser.Section) string {
@@ -63,11 +64,15 @@ func basicInfo(filename string) error {
 
 	machine := f.NtHeader.FileHeader.Machine.String()
 
+	// Detect language
+	language := detectLanguage(f)
+
 	// OUTPUT BASIC INFO
 	fmt.Printf("Basic info for %s:\n", filename)
 	fmt.Println("--------------------------------------")
 	fmt.Printf("File size:   %d bytes\n", st.Size())
 	fmt.Printf("Machine:     %s\n", machine)
+	fmt.Printf("Language:    %s\n", language)
 	fmt.Printf("SHA256:      %s\n", sha256sum)
 	fmt.Printf("SSDEEP:      %s\n", ssdeepSum)
 	fmt.Printf("Sections:    %d\n", len(f.Sections))
@@ -98,6 +103,78 @@ func fileSSDEEP(filename string) (string, error) {
 	return ssdeep.FuzzyFilename(filename)
 }
 
+// Detect programming language based on imports and sections
+func detectLanguage(f *peparser.File) string {
+	importMap := make(map[string]bool)
+	for _, imp := range f.Imports {
+		importMap[strings.ToLower(imp.Name)] = true
+	}
+
+	sectionNames := make(map[string]bool)
+	for _, sec := range f.Sections {
+		name := sectionName(sec)
+		sectionNames[strings.ToLower(name)] = true
+	}
+
+	// .NET / C#
+	if importMap["mscoree.dll"] {
+		return ".NET (C#/VB.NET)"
+	}
+
+	// Python (PyInstaller, cx_Freeze, etc.) - CHECK FIRST! High priority
+	pythonLibs := []string{
+		"python3.dll", "python3.12.dll", "python3.11.dll", "python3.10.dll",
+		"python3.9.dll", "python3.8.dll", "python3.7.dll", "python3.6.dll",
+		"python.dll", "pythondll.dll",
+	}
+	for _, pylib := range pythonLibs {
+		if importMap[pylib] {
+			return "Python"
+		}
+	}
+
+	// C/C++ with MSVC
+	if importMap["msvcp140.dll"] || importMap["vcruntime140.dll"] || importMap["msvcp120.dll"] {
+		return "C/C++ (MSVC)"
+	}
+
+	// C/C++ with GCC/MinGW
+	if importMap["libstdc++.dll"] || importMap["libgcc_s.dll"] || importMap["libwinpthread.dll"] {
+		return "C/C++ (GCC/MinGW)"
+	}
+
+	// Delphi/Pascal
+	if importMap["rtl.bpl"] || importMap["vcl.bpl"] {
+		return "Delphi/Pascal"
+	}
+
+	// Go - check for specific characteristics (minimal imports, Go-like structure)
+	if importMap["kernel32.dll"] && importMap["ntdll.dll"] && len(f.Imports) <= 3 {
+		return "Go"
+	}
+
+	// Rust - very minimal imports check
+	if len(f.Imports) == 1 && importMap["kernel32.dll"] {
+		return "Rust"
+	}
+
+	// AutoIt
+	if sectionNames[".rsrc"] && len(f.Imports) < 3 {
+		return "AutoIt Script"
+	}
+
+	// Generic C/C++
+	if importMap["kernel32.dll"] || importMap["ntdll.dll"] {
+		return "C/C++"
+	}
+
+	// Default
+	if len(f.Imports) > 0 {
+		return "Unknown (likely compiled)"
+	}
+	return "Unknown"
+}
+
 func extractStrings(filename string, minLen int, outFilename string) error {
 	b, err := os.ReadFile(filename)
 	if err != nil {
@@ -112,6 +189,7 @@ func extractStrings(filename string, minLen int, outFilename string) error {
 		if c >= 32 && c <= 126 {
 			cur = append(cur, c)
 		} else {
+			if len(cur) >= minLen {
 				results = append(results, string(cur))
 			}
 			cur = cur[:0]
@@ -217,6 +295,62 @@ func importsPE(filename string) error {
 	return nil
 }
 
+// Parse and display debug directory information
+func debugInfo(filename string) error {
+	f, err := peparser.New(filename, &peparser.Options{})
+	if err != nil {
+		return fmt.Errorf("error opening PE: %w", err)
+	}
+	if err := f.Parse(); err != nil {
+		return fmt.Errorf("error parsing PE: %w", err)
+	}
+
+	fmt.Printf("Debug info for %s:\n", filename)
+	fmt.Println("--------------------------------------")
+
+	// Check if debug directory exists
+	if len(f.Debugs) == 0 {
+		fmt.Println("No debug information found")
+		fmt.Println("--------------------------------------")
+		return nil
+	}
+
+	fmt.Printf("Number of debug entries: %d\n\n", len(f.Debugs))
+
+	// Display each debug entry
+	for idx, dbg := range f.Debugs {
+		fmt.Printf("Debug Entry %d:\n", idx+1)
+		fmt.Printf("  Type:              %s\n", dbg.Type)
+		fmt.Printf("  Characteristics:   0x%x\n", dbg.Struct.Characteristics)
+		fmt.Printf("  TimeDateStamp:     %d (0x%x)\n", dbg.Struct.TimeDateStamp, dbg.Struct.TimeDateStamp)
+		fmt.Printf("  MajorVersion:      %d\n", dbg.Struct.MajorVersion)
+		fmt.Printf("  MinorVersion:      %d\n", dbg.Struct.MinorVersion)
+		fmt.Printf("  PointerToRawData:  0x%x\n", dbg.Struct.PointerToRawData)
+		fmt.Printf("  SizeOfData:        %d bytes\n", dbg.Struct.SizeOfData)
+		fmt.Printf("  AddressOfRawData:  0x%x\n", dbg.Struct.AddressOfRawData)
+
+		// Specific handling for common debug types
+		switch dbg.Type {
+		case "IMAGE_DEBUG_TYPE_CODEVIEW":
+			fmt.Println("  -> CodeView (PDB) format detected")
+		case "IMAGE_DEBUG_TYPE_EXPORT_TABLE":
+			fmt.Println("  -> Export table debug info")
+		case "IMAGE_DEBUG_TYPE_FPO":
+			fmt.Println("  -> Frame Pointer Omission (FPO) info")
+		case "IMAGE_DEBUG_TYPE_MISC":
+			fmt.Println("  -> Miscellaneous debug info")
+		case "IMAGE_DEBUG_TYPE_POGO":
+			fmt.Println("  -> Profile Guided Optimization (PGO) info")
+		case "IMAGE_DEBUG_TYPE_EMBEDDED_MSIL":
+			fmt.Println("  -> Embedded MSIL debug info")
+		}
+		fmt.Println()
+	}
+
+	fmt.Println("--------------------------------------")
+	return nil
+}
+
 func main() {
 
 	// Если только один аргумент — file.exe → выводим basic info
@@ -285,6 +419,12 @@ func main() {
 		}
 		if err := extractStrings(filename, 4, out); err != nil {
 			fmt.Printf("Strings extraction error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "-d", "--debug":
+		if err := debugInfo(filename); err != nil {
+			fmt.Printf("Debug info extraction error: %v\n", err)
 			os.Exit(1)
 		}
 

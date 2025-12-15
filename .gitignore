@@ -4,3 +4,5 @@ main.exe
 strings.txt
 *.log
 *.tmp
+main_test.go
+main
