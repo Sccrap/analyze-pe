@@ -20,6 +20,7 @@ func help() {
 	fmt.Println("  -i, --imports    Show imports")
 	fmt.Println("  -s, --sections   Show sections")
 	fmt.Println("  -b, --basic      Show basic information (SHA256, SSDEEP, size, machine)")
+	fmt.Println("  -x, --strings    Export printable ASCII/UTF-16LE strings (optional output file)")
 }
 
 func sectionName(sec peparser.Section) string {
@@ -95,6 +96,69 @@ func fileSHA256(filename string) (string, error) {
 // Calculate SSDEEP
 func fileSSDEEP(filename string) (string, error) {
 	return ssdeep.FuzzyFilename(filename)
+}
+
+func extractStrings(filename string, minLen int, outFilename string) error {
+	b, err := os.ReadFile(filename)
+	if err != nil {
+		return fmt.Errorf("read file: %w", err)
+	}
+
+	var results []string
+
+	// ASCII strings
+	var cur []byte
+	for _, c := range b {
+		if c >= 32 && c <= 126 {
+			cur = append(cur, c)
+		} else {
+				results = append(results, string(cur))
+			}
+			cur = cur[:0]
+		}
+	}
+	if len(cur) >= minLen {
+		results = append(results, string(cur))
+	}
+
+	cur = cur[:0]
+	for i := 0; i+1 < len(b); i += 2 {
+		lo := b[i]
+		hi := b[i+1]
+		if hi == 0 && lo >= 32 && lo <= 126 {
+			cur = append(cur, lo)
+		} else {
+			if len(cur) >= minLen {
+				results = append(results, string(cur))
+			}
+			cur = cur[:0]
+		}
+	}
+	if len(cur) >= minLen {
+		results = append(results, string(cur))
+	}
+
+	// Output
+	if outFilename == "" {
+		for _, s := range results {
+			fmt.Println(s)
+		}
+		return nil
+	}
+
+	f, err := os.Create(outFilename)
+	if err != nil {
+		return fmt.Errorf("create output file: %w", err)
+	}
+	defer f.Close()
+
+	for _, s := range results {
+		if _, err := f.WriteString(s + "\n"); err != nil {
+			return fmt.Errorf("write output: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func sectionsPE(filename string) error {
@@ -210,6 +274,17 @@ func main() {
 	case "-b", "--basic":
 		if err := basicInfo(filename); err != nil {
 			fmt.Printf("Basic info error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "-x", "--strings":
+
+		out := ""
+		if len(os.Args) >= 4 {
+			out = os.Args[3]
+		}
+		if err := extractStrings(filename, 4, out); err != nil {
+			fmt.Printf("Strings extraction error: %v\n", err)
 			os.Exit(1)
 		}
 
