@@ -6,3 +6,5 @@ strings.txt
 *.tmp
 main_test.go
 main
+analyzer.exe
+strings.txt
