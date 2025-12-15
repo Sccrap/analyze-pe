@@ -35,25 +35,21 @@ func sectionName(sec peparser.Section) string {
 
 func basicInfo(filename string) error {
 
-	// SHA256
 	sha256sum, err := fileSHA256(filename)
 	if err != nil {
 		return fmt.Errorf("error calculating sha256: %v", err)
 	}
 
-	// SSDEEP
 	ssdeepSum, err := fileSSDEEP(filename)
 	if err != nil {
 		return fmt.Errorf("error calculating ssdeep: %v", err)
 	}
 
-	// SIZE
 	st, err := os.Stat(filename)
 	if err != nil {
 		return fmt.Errorf("stat error: %v", err)
 	}
 
-	// MACHINE (PE header)
 	f, err := peparser.New(filename, &peparser.Options{})
 	if err != nil {
 		return fmt.Errorf("error opening PE: %v", err)
@@ -64,7 +60,6 @@ func basicInfo(filename string) error {
 
 	machine := f.NtHeader.FileHeader.Machine.String()
 
-	// Detect language
 	language := detectLanguage(f)
 
 	// OUTPUT BASIC INFO
@@ -81,7 +76,6 @@ func basicInfo(filename string) error {
 	return nil
 }
 
-// Calculate SHA256
 func fileSHA256(filename string) (string, error) {
 	f, err := os.Open(filename)
 	if err != nil {
@@ -98,12 +92,10 @@ func fileSHA256(filename string) (string, error) {
 	return fmt.Sprintf("%x", sum), nil
 }
 
-// Calculate SSDEEP
 func fileSSDEEP(filename string) (string, error) {
 	return ssdeep.FuzzyFilename(filename)
 }
 
-// Detect programming language based on imports and sections
 func detectLanguage(f *peparser.File) string {
 	importMap := make(map[string]bool)
 	for _, imp := range f.Imports {
@@ -116,12 +108,10 @@ func detectLanguage(f *peparser.File) string {
 		sectionNames[strings.ToLower(name)] = true
 	}
 
-	// .NET / C#
 	if importMap["mscoree.dll"] {
 		return ".NET (C#/VB.NET)"
 	}
 
-	// Python (PyInstaller, cx_Freeze, etc.) - CHECK FIRST! High priority
 	pythonLibs := []string{
 		"python3.dll", "python3.12.dll", "python3.11.dll", "python3.10.dll",
 		"python3.9.dll", "python3.8.dll", "python3.7.dll", "python3.6.dll",
@@ -133,42 +123,34 @@ func detectLanguage(f *peparser.File) string {
 		}
 	}
 
-	// C/C++ with MSVC
 	if importMap["msvcp140.dll"] || importMap["vcruntime140.dll"] || importMap["msvcp120.dll"] {
 		return "C/C++ (MSVC)"
 	}
 
-	// C/C++ with GCC/MinGW
 	if importMap["libstdc++.dll"] || importMap["libgcc_s.dll"] || importMap["libwinpthread.dll"] {
 		return "C/C++ (GCC/MinGW)"
 	}
 
-	// Delphi/Pascal
 	if importMap["rtl.bpl"] || importMap["vcl.bpl"] {
 		return "Delphi/Pascal"
 	}
 
-	// Go - check for specific characteristics (minimal imports, Go-like structure)
 	if importMap["kernel32.dll"] && importMap["ntdll.dll"] && len(f.Imports) <= 3 {
 		return "Go"
 	}
 
-	// Rust - very minimal imports check
 	if len(f.Imports) == 1 && importMap["kernel32.dll"] {
 		return "Rust"
 	}
 
-	// AutoIt
 	if sectionNames[".rsrc"] && len(f.Imports) < 3 {
 		return "AutoIt Script"
 	}
 
-	// Generic C/C++
 	if importMap["kernel32.dll"] || importMap["ntdll.dll"] {
 		return "C/C++"
 	}
 
-	// Default
 	if len(f.Imports) > 0 {
 		return "Unknown (likely compiled)"
 	}
@@ -183,7 +165,6 @@ func extractStrings(filename string, minLen int, outFilename string) error {
 
 	var results []string
 
-	// ASCII strings
 	var cur []byte
 	for _, c := range b {
 		if c >= 32 && c <= 126 {
@@ -216,7 +197,6 @@ func extractStrings(filename string, minLen int, outFilename string) error {
 		results = append(results, string(cur))
 	}
 
-	// Output
 	if outFilename == "" {
 		for _, s := range results {
 			fmt.Println(s)
@@ -353,7 +333,6 @@ func debugInfo(filename string) error {
 
 func main() {
 
-	// Если только один аргумент — file.exe → выводим basic info
 	if len(os.Args) == 2 {
 		filename := os.Args[1]
 
@@ -371,7 +350,6 @@ func main() {
 		return
 	}
 
-	// Проверка количества аргументов
 	if len(os.Args) < 3 {
 		help()
 		os.Exit(1)
@@ -380,7 +358,6 @@ func main() {
 	flag := os.Args[1]
 	filename := os.Args[2]
 
-	// Проверка расширения файла
 	lower := strings.ToLower(filename)
 	if !strings.HasSuffix(lower, ".exe") && !strings.HasSuffix(lower, ".dll") {
 		fmt.Println("Unsupported file type. Expected .exe or .dll")
