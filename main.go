@@ -275,7 +275,6 @@ func importsPE(filename string) error {
 	return nil
 }
 
-// Parse and display debug directory information
 func debugInfo(filename string) error {
 	f, err := peparser.New(filename, &peparser.Options{})
 	if err != nil {
@@ -288,7 +287,6 @@ func debugInfo(filename string) error {
 	fmt.Printf("Debug info for %s:\n", filename)
 	fmt.Println("--------------------------------------")
 
-	// Check if debug directory exists
 	if len(f.Debugs) == 0 {
 		fmt.Println("No debug information found")
 		fmt.Println("--------------------------------------")
