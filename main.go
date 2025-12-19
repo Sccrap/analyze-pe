@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"strings"
 
@@ -17,11 +16,13 @@ func help() {
 	fmt.Println("Usage: analyzer <option> <file.exe|file.dll>")
 	fmt.Println("Options:")
 	fmt.Println("  -h, --help       Show this help message and exit")
+	fmt.Println("  -g, --gui        Launch graphical interface")
 	fmt.Println("  -i, --imports    Show imports")
 	fmt.Println("  -s, --sections   Show sections")
 	fmt.Println("  -b, --basic      Show basic information (SHA256, SSDEEP, size, machine)")
 	fmt.Println("  -x, --strings    Export printable ASCII/UTF-16LE strings (optional output file)")
 	fmt.Println("  -d, --debug      Show debug directory information")
+	fmt.Println("  --hex            View hex dump (usage: --hex file offset [size])")
 }
 
 func sectionName(sec peparser.Section) string {
@@ -257,17 +258,17 @@ func importsPE(filename string) error {
 	}
 
 	if len(f.Imports) == 0 {
-		log.Printf("No imports found in %s\n", filename)
+		fmt.Printf("No imports found in %s\n", filename)
 		return nil
 	}
 
 	for _, imp := range f.Imports {
-		log.Printf("DLL: %s", imp.Name)
+		fmt.Printf("DLL: %s\n", imp.Name)
 		for _, e := range imp.Functions {
 			if e.Name != "" {
-				log.Printf("  -> %s", e.Name)
+				fmt.Printf("  -> %s\n", e.Name)
 			} else {
-				log.Printf("  -> ord: %d", e.Ordinal)
+				fmt.Printf("  -> ord: %d\n", e.Ordinal)
 			}
 		}
 	}
@@ -329,9 +330,150 @@ func debugInfo(filename string) error {
 	return nil
 }
 
+func viewHex(filename string, offset int64, size int64) error {
+	f, err := os.Open(filename)
+	if err != nil {
+		return fmt.Errorf("error opening file: %w", err)
+	}
+	defer f.Close()
+
+	fi, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("error stat file: %w", err)
+	}
+
+	fileSize := fi.Size()
+	if offset >= fileSize {
+		return fmt.Errorf("offset is beyond file size")
+	}
+
+	if size <= 0 {
+		size = 256
+	}
+
+	if offset+size > fileSize {
+		size = fileSize - offset
+	}
+
+	if _, err := f.Seek(offset, 0); err != nil {
+		return fmt.Errorf("error seeking: %w", err)
+	}
+
+	data := make([]byte, size)
+	n, err := f.Read(data)
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("error reading: %w", err)
+	}
+
+	fmt.Printf("Hex dump for %s (offset: 0x%x, size: %d bytes)\n", filename, offset, n)
+	fmt.Println("--------------------------------------")
+
+	for i := 0; i < n; i += 16 {
+		end := i + 16
+		if end > n {
+			end = n
+		}
+
+		fmt.Printf("0x%08x: ", offset+int64(i))
+
+		// Print hex bytes
+		for j := i; j < end; j++ {
+			fmt.Printf("%02x ", data[j])
+		}
+
+		// Padding for alignment
+		for j := end - i; j < 16; j++ {
+			fmt.Print("   ")
+		}
+
+		fmt.Print(" | ")
+
+		// Print ASCII representation
+		for j := i; j < end; j++ {
+			c := data[j]
+			if c >= 32 && c <= 126 {
+				fmt.Printf("%c", c)
+			} else {
+				fmt.Print(".")
+			}
+		}
+		fmt.Println()
+	}
+
+	fmt.Println("--------------------------------------")
+	return nil
+}
+
+func writeHexData(filename string, offset int64, data []byte) error {
+	f, err := os.OpenFile(filename, os.O_WRONLY, 0)
+	if err != nil {
+		return fmt.Errorf("error opening file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.Seek(offset, 0); err != nil {
+		return fmt.Errorf("error seeking: %w", err)
+	}
+
+	if _, err := f.Write(data); err != nil {
+		return fmt.Errorf("error writing: %w", err)
+	}
+
+	return nil
+}
+
+func writeHex(filename string, offset int64, hexStr string) error {
+	// Parse hex string
+	parts := strings.Fields(hexStr)
+	data := make([]byte, 0, len(parts))
+
+	for _, part := range parts {
+		var b byte
+		if _, err := fmt.Sscanf(part, "%x", &b); err != nil {
+			return fmt.Errorf("invalid hex value '%s': %w", part, err)
+		}
+		data = append(data, b)
+	}
+
+	f, err := os.OpenFile(filename, os.O_WRONLY, 0)
+	if err != nil {
+		return fmt.Errorf("error opening file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.Seek(offset, 0); err != nil {
+		return fmt.Errorf("error seeking: %w", err)
+	}
+
+	if _, err := f.Write(data); err != nil {
+		return fmt.Errorf("error writing: %w", err)
+	}
+
+	return nil
+}
+
 func main() {
 
+	if len(os.Args) == 1 {
+		help()
+		os.Exit(1)
+	}
+
 	if len(os.Args) == 2 {
+		flag := strings.ToLower(os.Args[1])
+
+		// Check for GUI flag
+		if flag == "-g" || flag == "--gui" {
+			RunGUI()
+			return
+		}
+
+		// Check for help flag
+		if flag == "-h" || flag == "--help" {
+			help()
+			return
+		}
+
 		filename := os.Args[1]
 
 		if strings.HasSuffix(strings.ToLower(filename), ".exe") ||
@@ -348,12 +490,7 @@ func main() {
 		return
 	}
 
-	if len(os.Args) < 3 {
-		help()
-		os.Exit(1)
-	}
-
-	flag := os.Args[1]
+	flag := strings.ToLower(os.Args[1])
 	filename := os.Args[2]
 
 	lower := strings.ToLower(filename)
@@ -400,6 +537,33 @@ func main() {
 	case "-d", "--debug":
 		if err := debugInfo(filename); err != nil {
 			fmt.Printf("Debug info extraction error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "--hex":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: analyzer --hex <file> <offset> [size]")
+			os.Exit(1)
+		}
+		filename := os.Args[2]
+		var offset, size int64
+		if _, err := fmt.Sscanf(os.Args[3], "%x", &offset); err != nil {
+			if _, err := fmt.Sscanf(os.Args[3], "%d", &offset); err != nil {
+				fmt.Printf("Invalid offset: %v\n", err)
+				os.Exit(1)
+			}
+		}
+		size = 256
+		if len(os.Args) >= 5 {
+			if _, err := fmt.Sscanf(os.Args[4], "%x", &size); err != nil {
+				if _, err := fmt.Sscanf(os.Args[4], "%d", &size); err != nil {
+					fmt.Printf("Invalid size: %v\n", err)
+					os.Exit(1)
+				}
+			}
+		}
+		if err := viewHex(filename, offset, size); err != nil {
+			fmt.Printf("Hex view error: %v\n", err)
 			os.Exit(1)
 		}
 
