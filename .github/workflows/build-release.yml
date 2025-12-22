@@ -1,0 +1,115 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Триггер: push тега вроде v1.0.0
+  workflow_dispatch:  # Ручной запуск из Actions вкладки
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false  # Продолжить сборку даже если одна упадет
+      matrix:
+        include:
+          # Windows CLI (без GUI, более надежно)
+          - os: ubuntu-latest
+            goos: windows
+            goarch: amd64
+            output: analyzer-windows-amd64.exe
+            name: Windows-x64
+            cgo: 0
+
+          # Linux
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            output: analyzer-linux-amd64
+            name: Linux-x64
+            cgo: 0
+
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            output: analyzer-linux-arm64
+            name: Linux-ARM64
+            cgo: 0
+
+          # macOS Intel
+          - os: macos-13
+            goos: darwin
+            goarch: amd64
+            output: analyzer-darwin-amd64
+            name: macOS-Intel
+            cgo: 0
+
+          # macOS Apple Silicon
+          - os: macos-14
+            goos: darwin
+            goarch: arm64
+            output: analyzer-darwin-arm64
+            name: macOS-ARM64
+            cgo: 0
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Build for ${{ matrix.name }}
+        run: |
+          mkdir -p dist
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=${{ matrix.cgo }} go build -o dist/${{ matrix.output }}
+
+      - name: Make executable (Unix)
+        if: matrix.goos != 'windows'
+        run: chmod +x dist/${{ matrix.output }}
+
+      - name: List build output
+        run: ls -lh dist/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.name }}
+          path: dist/${{ matrix.output }}
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: release-artifacts
+
+      - name: List all artifacts
+        run: find release-artifacts -type f -exec ls -lh {} \;
+
+      - name: Prepare release files
+        run: |
+          mkdir -p final-release
+          find release-artifacts -type f -exec cp {} final-release/ \;
+          ls -lh final-release/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: final-release/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
