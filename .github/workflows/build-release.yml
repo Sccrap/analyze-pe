@@ -64,10 +64,18 @@ jobs:
       - name: Download dependencies
         run: go mod download && go mod tidy
 
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Check go environment
+        run: go env
+
       - name: Build for ${{ matrix.name }}
         run: |
           mkdir -p dist
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=${{ matrix.cgo }} go build -o dist/${{ matrix.output }}
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=${{ matrix.cgo }} go build -v -tags=cli -o dist/${{ matrix.output }}
+        env:
+          GO111MODULE: on
 
       - name: Make executable (Unix)
         if: matrix.goos != 'windows'

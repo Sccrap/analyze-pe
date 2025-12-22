@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -216,12 +217,11 @@ func (ui *AnalyzerUI) onSelectFile() {
 		defer reader.Close()
 
 		path := reader.URI().Path()
+		path = filepath.FromSlash(path)
+		path = filepath.Clean(path)
 		ui.fullFilePath = path
 
-		filename := path
-		if idx := strings.LastIndex(path, "/"); idx >= 0 {
-			filename = path[idx+1:]
-		}
+		filename := filepath.Base(path)
 
 		ui.filePath.SetText("📁 " + filename)
 		ui.updateStatus("✓ File loaded: " + filename)
@@ -349,7 +349,7 @@ func (ui *AnalyzerUI) onExportStrings() {
 
 		ui.updateStatus("🔄 Exporting strings...")
 		go func() {
-			if err := extractStrings(path, 4, writer.URI().Path()); err != nil {
+			if err := extractStrings(path, 4, filepath.FromSlash(writer.URI().Path())); err != nil {
 				ui.updateStatus("❌ Export failed: " + err.Error())
 			} else {
 				ui.updateStatus("✓ Strings exported successfully")
