@@ -13,10 +13,10 @@ import (
 )
 
 func help() {
-	fmt.Println("Usage: analyzer <option> <file.exe|file.dll>")
+	fmt.Println("Usage: analyzer <option> [file.exe|file.dll]")
 	fmt.Println("Options:")
 	fmt.Println("  -h, --help       Show this help message and exit")
-	fmt.Println("  -g, --gui        Launch graphical interface")
+	fmt.Println("  -w, --web        Launch web interface (http://localhost:8080)")
 	fmt.Println("  -i, --imports    Show imports")
 	fmt.Println("  -s, --sections   Show sections")
 	fmt.Println("  -b, --basic      Show basic information (SHA256, SSDEEP, size, machine)")
@@ -109,10 +109,22 @@ func detectLanguage(f *peparser.File) string {
 		sectionNames[strings.ToLower(name)] = true
 	}
 
+	// .NET detection (highest priority)
 	if importMap["mscoree.dll"] {
+		if importMap["mscorlib.dll"] {
+			return ".NET (C#/VB.NET/F#) - CLR"
+		}
 		return ".NET (C#/VB.NET)"
 	}
+	
+	// Visual C++ detection
+	if sectionNames[".reloc"] && importMap["kernel32.dll"] && importMap["ntdll.dll"] {
+		if importMap["msvcp140.dll"] || importMap["vcruntime140.dll"] || importMap["msvcp120.dll"] || importMap["msvcp110.dll"] {
+			return "C/C++ (MSVC)"
+		}
+	}
 
+	// Python detection
 	pythonLibs := []string{
 		"python3.dll", "python3.12.dll", "python3.11.dll", "python3.10.dll",
 		"python3.9.dll", "python3.8.dll", "python3.7.dll", "python3.6.dll",
@@ -120,41 +132,157 @@ func detectLanguage(f *peparser.File) string {
 	}
 	for _, pylib := range pythonLibs {
 		if importMap[pylib] {
+			if sectionNames[".data"] {
+				return "Python (Compiled)"
+			}
 			return "Python"
 		}
 	}
 
-	if importMap["msvcp140.dll"] || importMap["vcruntime140.dll"] || importMap["msvcp120.dll"] {
-		return "C/C++ (MSVC)"
-	}
-
+	// GCC/MinGW detection
 	if importMap["libstdc++.dll"] || importMap["libgcc_s.dll"] || importMap["libwinpthread.dll"] {
 		return "C/C++ (GCC/MinGW)"
 	}
 
-	if importMap["rtl.bpl"] || importMap["vcl.bpl"] {
+	// Delphi/Pascal detection
+	if importMap["rtl.bpl"] || importMap["vcl.bpl"] || importMap["rtlx0.dll"] {
 		return "Delphi/Pascal"
 	}
 
-	if importMap["kernel32.dll"] && importMap["ntdll.dll"] && len(f.Imports) <= 3 {
-		return "Go"
-	}
-
+	// Rust detection
 	if len(f.Imports) == 1 && importMap["kernel32.dll"] {
+		if sectionNames[".pdata"] {
+			return "Rust (64-bit optimized)"
+		}
 		return "Rust"
 	}
 
-	if sectionNames[".rsrc"] && len(f.Imports) < 3 {
-		return "AutoIt Script"
+	// Go detection
+	if importMap["kernel32.dll"] && importMap["ntdll.dll"] && len(f.Imports) <= 3 {
+		if sectionNames[".go.buildinfo"] || sectionNames[".go.func"] {
+			return "Go"
+		}
+		// Additional Go heuristic: minimal imports, .text section
+		if len(f.Imports) <= 2 && len(f.Sections) >= 5 {
+			return "Go (likely)"
+		}
 	}
 
+	// Java/Kotlin detection (if compiled to Windows executable)
+	if importMap["jvm.dll"] || importMap["java.dll"] || importMap["msvcr120.dll"] && len(f.Imports) >= 10 {
+		return "Java/Kotlin"
+	}
+
+	// VB6 detection
+	if importMap["msvbvm60.dll"] {
+		return "Visual Basic 6"
+	}
+
+	// Clojure/JVM detection
+	if sectionNames[".clj"] {
+		return "Clojure"
+	}
+
+	// AutoIt detection
+	if sectionNames[".rsrc"] && len(f.Imports) < 3 {
+		if importMap["kernel32.dll"] {
+			return "AutoIt Script"
+		}
+		return "AutoIt/Resource Script"
+	}
+
+	// Haskell detection (if present)
+	if importMap["libhs-ghc.dll"] || importMap["libhsrts.dll"] {
+		return "Haskell"
+	}
+
+	// Fortran detection
+	if importMap["libifcoremmd.dll"] || importMap["libmmd.dll"] {
+		return "Fortran (Intel/GCC)"
+	}
+
+	// Nim detection
+	if importMap["nim.dll"] || sectionNames[".nims"] {
+		return "Nim"
+	}
+
+	// Crystal detection
+	if importMap["crystal.dll"] || sectionNames[".crystal"] {
+		return "Crystal"
+	}
+
+	// Ada detection
+	if importMap["libgnat"] || importMap["gnatlib.dll"] {
+		return "Ada (GNAT)"
+	}
+
+	// Julia detection
+	if importMap["libjulia.dll"] || sectionNames[".julia"] {
+		return "Julia"
+	}
+
+	// D detection
+	if importMap["phobos.dll"] || sectionNames[".dmodules"] {
+		return "D (dlang)"
+	}
+
+	// Swift detection
+	if importMap["swiftrt.dll"] || sectionNames[".swift"] {
+		return "Swift"
+	}
+
+	// Erlang/Elixir detection
+	if importMap["erl_nif.dll"] {
+		return "Erlang/Elixir"
+	}
+
+	// Generic C/C++ detection
 	if importMap["kernel32.dll"] || importMap["ntdll.dll"] {
-		return "C/C++"
+		if importMap["user32.dll"] || importMap["gdi32.dll"] || importMap["advapi32.dll"] {
+			return "C/C++ (Windows Native)"
+		}
+		if sectionNames[".text"] && sectionNames[".data"] {
+			return "C/C++"
+		}
+	}
+
+	// Delphi generic detection
+	if importMap["kernel32.dll"] && len(f.Imports) > 15 {
+		return "Delphi (likely)"
+	}
+
+	// Assembly or UPX packed
+	if sectionNames["upx0"] || sectionNames["upx1"] {
+		return "UPX Packed (Original: Unknown)"
+	}
+
+	// Dotfuscator obfuscation
+	if sectionNames[".obfuscated"] {
+		return ".NET (Obfuscated)"
+	}
+
+	// Windows kernel driver
+	if sectionNames[".reloc"] && !importMap["kernel32.dll"] && len(f.Imports) < 3 {
+		return "Windows Driver"
+	}
+
+	// Large number of imports suggests higher-level language
+	if len(f.Imports) > 20 {
+		return "Compiled Application (Complex dependencies)"
+	}
+
+	// No imports or very few
+	if len(f.Imports) == 0 {
+		if len(f.Sections) > 6 {
+			return "Statically Linked Binary"
+		}
+		return "Unknown (No imports)"
 	}
 
 	if len(f.Imports) > 0 {
 		return "Unknown (likely compiled)"
 	}
+
 	return "Unknown"
 }
 
@@ -164,6 +292,31 @@ func extractStrings(filename string, minLen int, outFilename string) error {
 		return fmt.Errorf("read file: %w", err)
 	}
 
+	results := extractStringsData(b, minLen)
+
+	if outFilename == "" {
+		for _, s := range results {
+			fmt.Println(s)
+		}
+		return nil
+	}
+
+	f, err := os.Create(outFilename)
+	if err != nil {
+		return fmt.Errorf("create output file: %w", err)
+	}
+	defer f.Close()
+
+	for _, s := range results {
+		if _, err := f.WriteString(s + "\n"); err != nil {
+			return fmt.Errorf("write output: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func extractStringsData(b []byte, minLen int) []string {
 	var results []string
 
 	var cur []byte
@@ -198,26 +351,7 @@ func extractStrings(filename string, minLen int, outFilename string) error {
 		results = append(results, string(cur))
 	}
 
-	if outFilename == "" {
-		for _, s := range results {
-			fmt.Println(s)
-		}
-		return nil
-	}
-
-	f, err := os.Create(outFilename)
-	if err != nil {
-		return fmt.Errorf("create output file: %w", err)
-	}
-	defer f.Close()
-
-	for _, s := range results {
-		if _, err := f.WriteString(s + "\n"); err != nil {
-			return fmt.Errorf("write output: %w", err)
-		}
-	}
-
-	return nil
+	return results
 }
 
 func sectionsPE(filename string) error {
@@ -462,9 +596,12 @@ func main() {
 	if len(os.Args) == 2 {
 		flag := strings.ToLower(os.Args[1])
 
-		// Check for GUI flag
-		if flag == "-g" || flag == "--gui" {
-			RunGUI()
+		// Check for web flag
+		if flag == "-w" || flag == "--web" {
+			if err := RunWebUI(); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
 			return
 		}
 
