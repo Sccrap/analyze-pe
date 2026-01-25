@@ -137,6 +137,8 @@ jobs:
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           files: final-release/*
           draft: false
@@ -150,6 +152,4 @@ jobs:
             - **Windows**: x86_64 and ARM64
             
             Choose the appropriate binary for your platform.
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
