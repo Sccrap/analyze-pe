@@ -13,7 +13,7 @@ jobs:
       fail-fast: false  # Продолжить сборку даже если одна упадет
       matrix:
         include:
-          # Windows CLI (без GUI, более надежно)
+          # Windows x86_64
           - os: ubuntu-latest
             goos: windows
             goarch: amd64
@@ -21,7 +21,15 @@ jobs:
             name: Windows-x64
             cgo: 0
 
-          # Linux
+          # Windows ARM64
+          - os: ubuntu-latest
+            goos: windows
+            goarch: arm64
+            output: analyzer-windows-arm64.exe
+            name: Windows-ARM64
+            cgo: 0
+
+          # Linux x86_64
           - os: ubuntu-latest
             goos: linux
             goarch: amd64
@@ -29,6 +37,7 @@ jobs:
             name: Linux-x64
             cgo: 0
 
+          # Linux ARM64
           - os: ubuntu-latest
             goos: linux
             goarch: arm64
@@ -36,19 +45,19 @@ jobs:
             name: Linux-ARM64
             cgo: 0
 
-          # macOS Intel
+          # macOS Intel (x86_64)
           - os: macos-13
             goos: darwin
             goarch: amd64
-            output: analyzer-darwin-amd64
+            output: analyzer-macos-amd64
             name: macOS-Intel
             cgo: 0
 
-          # macOS Apple Silicon
+          # macOS Apple Silicon (ARM64)
           - os: macos-14
             goos: darwin
             goarch: arm64
-            output: analyzer-darwin-arm64
+            output: analyzer-macos-arm64
             name: macOS-ARM64
             cgo: 0
 
@@ -84,11 +93,17 @@ jobs:
       - name: List build output
         run: ls -lh dist/
 
+      - name: Create checksums
+        run: |
+          cd dist
+          sha256sum ${{ matrix.output }} > ${{ matrix.output }}.sha256
+          ls -lh
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: dist/${{ matrix.output }}
+          path: dist/
           retention-days: 30
 
   release:
@@ -106,13 +121,19 @@ jobs:
           path: release-artifacts
 
       - name: List all artifacts
-        run: find release-artifacts -type f -exec ls -lh {} \;
+        run: |
+          echo "All downloaded artifacts:"
+          find release-artifacts -type f | sort
 
       - name: Prepare release files
         run: |
           mkdir -p final-release
           find release-artifacts -type f -exec cp {} final-release/ \;
+          echo "Release files prepared:"
           ls -lh final-release/
+          echo ""
+          echo "SHA256 checksums:"
+          find final-release -name "*.sha256" -exec cat {} \;
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -121,6 +142,14 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
+          body: |
+            ## Binaries Available
+            This release includes pre-built binaries for:
+            - **macOS**: Intel (x86_64) and Apple Silicon (ARM64)
+            - **Linux**: x86_64 and ARM64
+            - **Windows**: x86_64 and ARM64
+            
+            Choose the appropriate binary for your platform.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
