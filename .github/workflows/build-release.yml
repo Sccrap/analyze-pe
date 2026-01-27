@@ -149,12 +149,14 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir -p final-release
-          find release-artifacts -type f -exec cp {} final-release/ \;
+          # Копируем все файлы из всех подпапок артефактов
+          find release-artifacts -type f \( -name "analyzer-*" -o -name "*.sha256" \) -exec cp -v {} final-release/ \;
+          echo ""
           echo "Release files prepared:"
           ls -lh final-release/
           echo ""
           echo "SHA256 checksums:"
-          find final-release -name "*.sha256" -exec cat {} \;
+          cat final-release/*.sha256 2>/dev/null || echo "No checksums found"
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
