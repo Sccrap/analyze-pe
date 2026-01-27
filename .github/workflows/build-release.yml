@@ -158,11 +158,24 @@ jobs:
           echo "SHA256 checksums:"
           cat final-release/*.sha256 2>/dev/null || echo "No checksums found"
 
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${{ github.ref }}"
+            VERSION="${VERSION#refs/tags/}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version to release: ${VERSION}"
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          tag_name: ${{ steps.version.outputs.version }}
           files: final-release/*
           draft: false
           prerelease: false
