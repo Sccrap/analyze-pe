@@ -281,6 +281,14 @@ var webAssets = map[string]string{
                 <button onclick="runAnalysis('debug')">🐛 Debug Info</button>
                 <button onclick="runAnalysis('strings')">📄 Strings</button>
             </div>
+
+            <h3 style="color: #90caf9; margin-top: 2rem; margin-bottom: 1rem; font-size: 1.1rem;">PE Headers</h3>
+            <div class="buttons-group">
+                <button onclick="runAnalysis('dos-header')">📋 DOS Header</button>
+                <button onclick="runAnalysis('nt-headers')">🔐 NT Headers</button>
+                <button onclick="runAnalysis('parse-headers')">📦 All Headers</button>
+                <button onclick="showSectionDialog()">📂 Section Data</button>
+            </div>
         </div>
 
         <div class="card">
@@ -291,6 +299,23 @@ var webAssets = map[string]string{
             </div>
             <div class="output-container" id="output">
                 <pre id="outputText"></pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Section Data -->
+    <div id="sectionModal" style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.6);">
+        <div style="background-color: #252535; margin: 10% auto; padding: 2rem; border: 1px solid #64b5f6; border-radius: 8px; width: 300px; color: #e0e0e0;">
+            <h3 style="color: #64b5f6; margin-bottom: 1rem;">Read Section Data</h3>
+            <label style="display: block; margin-bottom: 0.5rem; color: #90caf9;">Section Index:</label>
+            <input type="number" id="sectionIndex" value="0" min="0" style="width: 100%; padding: 0.5rem; background: rgba(0, 0, 0, 0.3); border: 1px solid #64b5f6; border-radius: 4px; color: #e0e0e0; margin-bottom: 1rem;">
+            
+            <label style="display: block; margin-bottom: 0.5rem; color: #90caf9;">Limit (bytes):</label>
+            <input type="number" id="sectionLimit" value="512" min="1" style="width: 100%; padding: 0.5rem; background: rgba(0, 0, 0, 0.3); border: 1px solid #64b5f6; border-radius: 4px; color: #e0e0e0; margin-bottom: 1.5rem;">
+            
+            <div style="text-align: right;">
+                <button onclick="closeSectionDialog()" style="margin-right: 0.5rem;">Cancel</button>
+                <button onclick="readSectionData()">Read</button>
             </div>
         </div>
     </div>
@@ -330,6 +355,67 @@ var webAssets = map[string]string{
             const errorMsg = '❌ Error\n' + error;
             document.getElementById('outputText').innerHTML = '<span class="error">' + errorMsg + '</span>';
             document.getElementById('output').classList.add('active');
+        }
+
+        function showSectionDialog() {
+            if (!selectedFile) {
+                alert('Please select a file first');
+                return;
+            }
+            document.getElementById('sectionModal').style.display = 'block';
+        }
+
+        function closeSectionDialog() {
+            document.getElementById('sectionModal').style.display = 'none';
+        }
+
+        window.onclick = function(event) {
+            const modal = document.getElementById('sectionModal');
+            if (event.target == modal) {
+                modal.style.display = 'none';
+            }
+        }
+
+        async function readSectionData() {
+            if (!selectedFile) {
+                alert('Please select a file first');
+                return;
+            }
+
+            const sectionIndex = document.getElementById('sectionIndex').value;
+            const sectionLimit = document.getElementById('sectionLimit').value;
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            formData.append('type', 'section-data');
+            formData.append('sectionIndex', sectionIndex);
+            formData.append('sectionLimit', sectionLimit);
+
+            closeSectionDialog();
+            updateStatus('🔄 Reading section ' + sectionIndex + '...');
+            document.getElementById('loading').classList.add('active');
+
+            try {
+                const response = await fetch('/api/analyze', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showOutput(result.data);
+                    updateStatus('✓ Section data retrieved');
+                } else {
+                    showError(result.error);
+                    updateStatus('❌ Failed to read section');
+                }
+            } catch (error) {
+                showError(error.message);
+                updateStatus('❌ Request failed');
+            } finally {
+                document.getElementById('loading').classList.remove('active');
+            }
         }
 
         async function runAnalysis(type) {
@@ -499,6 +585,65 @@ func handleAnalyze(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+
+	case "dos-header":
+		if err := parseDOSHeader(tmpFile.Name()); err != nil {
+			json.NewEncoder(w).Encode(AnalysisResponse{
+				Success: false,
+				Error:   "Failed to parse DOS header: " + err.Error(),
+			})
+			return
+		}
+		oldStdout := os.Stdout
+		pipeR, pipeW, _ := os.Pipe()
+		os.Stdout = pipeW
+		parseDOSHeader(tmpFile.Name())
+		pipeW.Close()
+		io.Copy(&output, pipeR)
+		os.Stdout = oldStdout
+
+	case "nt-headers":
+		oldStdout := os.Stdout
+		pipeR, pipeW, _ := os.Pipe()
+		os.Stdout = pipeW
+		parseNTHeaders(tmpFile.Name())
+		pipeW.Close()
+		io.Copy(&output, pipeR)
+		os.Stdout = oldStdout
+
+	case "parse-headers":
+		oldStdout := os.Stdout
+		pipeR, pipeW, _ := os.Pipe()
+		os.Stdout = pipeW
+		parseAllHeaders(tmpFile.Name())
+		pipeW.Close()
+		io.Copy(&output, pipeR)
+		os.Stdout = oldStdout
+
+	case "section-data":
+		sectionIndex := 0
+		sectionLimit := 512
+		if idx := r.FormValue("sectionIndex"); idx != "" {
+			fmt.Sscanf(idx, "%d", &sectionIndex)
+		}
+		if lim := r.FormValue("sectionLimit"); lim != "" {
+			fmt.Sscanf(lim, "%d", &sectionLimit)
+		}
+
+		if err := viewSectionData(tmpFile.Name(), sectionIndex, sectionLimit); err != nil {
+			json.NewEncoder(w).Encode(AnalysisResponse{
+				Success: false,
+				Error:   "Failed to read section data: " + err.Error(),
+			})
+			return
+		}
+		oldStdout := os.Stdout
+		pipeR, pipeW, _ := os.Pipe()
+		os.Stdout = pipeW
+		viewSectionData(tmpFile.Name(), sectionIndex, sectionLimit)
+		pipeW.Close()
+		io.Copy(&output, pipeR)
+		os.Stdout = oldStdout
 
 	default:
 		json.NewEncoder(w).Encode(AnalysisResponse{

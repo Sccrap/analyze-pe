@@ -23,6 +23,10 @@ func help() {
 	fmt.Println("  -x, --strings    Export printable ASCII/UTF-16LE strings (optional output file)")
 	fmt.Println("  -d, --debug      Show debug directory information")
 	fmt.Println("  --hex            View hex dump (usage: --hex file offset [size])")
+	fmt.Println("  --dos-header     Parse and display DOS header")
+	fmt.Println("  --nt-headers     Parse and display NT headers (signature, file header, optional header)")
+	fmt.Println("  --parse-headers  Parse and display all PE headers (DOS + NT)")
+	fmt.Println("  --section-data   View section data (usage: --section-data file section_index [limit])")
 }
 
 func sectionName(sec peparser.Section) string {
@@ -116,7 +120,7 @@ func detectLanguage(f *peparser.File) string {
 		}
 		return ".NET (C#/VB.NET)"
 	}
-	
+
 	// Visual C++ detection
 	if sectionNames[".reloc"] && importMap["kernel32.dll"] && importMap["ntdll.dll"] {
 		if importMap["msvcp140.dll"] || importMap["vcruntime140.dll"] || importMap["msvcp120.dll"] || importMap["msvcp110.dll"] {
@@ -586,6 +590,71 @@ func writeHex(filename string, offset int64, hexStr string) error {
 	return nil
 }
 
+// parseDOSHeader - парсит и выводит DOS заголовок
+func parseDOSHeader(filename string) error {
+	parser, err := NewPEParser(filename)
+	if err != nil {
+		return err
+	}
+
+	if err := parser.parseDOSHeader(); err != nil {
+		return err
+	}
+
+	parser.PrintDOSHeader()
+	return nil
+}
+
+// parseNTHeaders - парсит и выводит NT заголовки
+func parseNTHeaders(filename string) error {
+	parser, err := NewPEParser(filename)
+	if err != nil {
+		return err
+	}
+
+	if err := parser.parseDOSHeader(); err != nil {
+		return err
+	}
+
+	if err := parser.parseNTHeaders(); err != nil {
+		return err
+	}
+
+	parser.PrintNTHeaders()
+	return nil
+}
+
+// parseAllHeaders - парсит и выводит все заголовки (DOS + NT + Sections)
+func parseAllHeaders(filename string) error {
+	parser, err := NewPEParser(filename)
+	if err != nil {
+		return err
+	}
+
+	if err := parser.Parse(); err != nil {
+		return err
+	}
+
+	parser.PrintDOSHeader()
+	parser.PrintNTHeaders()
+	parser.PrintSectionHeaders()
+	return nil
+}
+
+// viewSectionData - выводит данные секции
+func viewSectionData(filename string, sectionIndex int, limit int) error {
+	parser, err := NewPEParser(filename)
+	if err != nil {
+		return err
+	}
+
+	if err := parser.Parse(); err != nil {
+		return err
+	}
+
+	return parser.PrintSectionData(sectionIndex, limit)
+}
+
 func main() {
 
 	if len(os.Args) == 1 {
@@ -701,6 +770,46 @@ func main() {
 		}
 		if err := viewHex(filename, offset, size); err != nil {
 			fmt.Printf("Hex view error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "--dos-header":
+		if err := parseDOSHeader(filename); err != nil {
+			fmt.Printf("DOS header parsing error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "--nt-headers":
+		if err := parseNTHeaders(filename); err != nil {
+			fmt.Printf("NT headers parsing error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "--parse-headers":
+		if err := parseAllHeaders(filename); err != nil {
+			fmt.Printf("Headers parsing error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "--section-data":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: analyzer --section-data <file> <section_index> [limit]")
+			os.Exit(1)
+		}
+		var sectionIndex int
+		if _, err := fmt.Sscanf(os.Args[3], "%d", &sectionIndex); err != nil {
+			fmt.Printf("Invalid section index: %v\n", err)
+			os.Exit(1)
+		}
+		limit := 512
+		if len(os.Args) >= 5 {
+			if _, err := fmt.Sscanf(os.Args[4], "%d", &limit); err != nil {
+				fmt.Printf("Invalid limit: %v\n", err)
+				os.Exit(1)
+			}
+		}
+		if err := viewSectionData(filename, sectionIndex, limit); err != nil {
+			fmt.Printf("Section data error: %v\n", err)
 			os.Exit(1)
 		}
 
